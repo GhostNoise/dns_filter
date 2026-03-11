@@ -1,0 +1,11 @@
+{$DUCKDNS_DOMAIN} {
+	tls {
+		dns duckdns {$DUCKDNS_TOKEN}
+	}
+
+	# DoH endpoint
+	reverse_proxy /dns-query adguard:80
+
+	# Web UI
+	reverse_proxy adguard:80
+}
