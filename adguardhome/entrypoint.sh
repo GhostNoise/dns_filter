@@ -7,7 +7,7 @@ TEMPLATE="/opt/adguardhome/conf/AdGuardHome.yaml.template"
 if [ ! -f "$CONF" ]; then
   if [ -n "$AGH_USER" ] && [ -n "$AGH_PASSWORD" ]; then
     echo "[entrypoint] Generating config from template..."
-    HASH=$(adguardhome --hash-password "$AGH_PASSWORD" 2>/dev/null | tail -1)
+    HASH=$(/opt/adguardhome/AdGuardHome --hash-password "$AGH_PASSWORD" 2>&1 | tail -1)
 
     # awk handles $ in bcrypt hash safely (sed does not)
     awk -v user="$AGH_USER" -v hash="$HASH" '{
