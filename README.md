@@ -20,20 +20,22 @@
 ├── docker-compose.yml                 # AdGuard Home + Caddy (опціональний DoH профіль)
 ├── .env.example                       # Шаблон змінних оточення
 ├── adguardhome/
-│   ├── Dockerfile                     # Кастомний entrypoint
-│   ├── entrypoint.sh                  # Генерація конфігу з env змінних
-│   └── AdGuardHome.yaml.template      # Шаблон конфігу
+│   ├── Dockerfile                     # Кастомний image з entrypoint
+│   ├── entrypoint.sh                  # Автогенерація конфігу або запуск wizard
+│   └── AdGuardHome.yaml.template      # Шаблон конфігу (upstream, блоклісти, кеш)
 └── caddy/
     ├── Dockerfile                     # Caddy з DuckDNS плагіном
     └── Caddyfile                      # Reverse proxy для DoH
 ```
 
-## Два режими запуску
+## Два режими першого запуску
 
-| Режим | Коли використовувати | Як запустити |
-|-------|---------------------|-------------|
-| **Автоматичний** | Знаєш логін/пароль заздалегідь | Заповни `.env` → `docker compose up -d --build` |
-| **Wizard** | Хочеш налаштувати вручну через UI | Не заповнюй `AGH_USER`/`AGH_PASSWORD` → wizard на `:3000` |
+| Режим | Умова | Що відбувається |
+|-------|-------|-----------------|
+| **Автоматичний** | `AGH_USER` + `AGH_PASSWORD` задані в `.env` | Конфіг генерується з шаблону, UI одразу на `:8080` |
+| **Wizard** | Змінні не задані | Стандартний wizard AdGuard Home на `:3000` |
+
+При повторних запусках конфіг вже існує — обидва режими просто стартують AdGuard Home.
 
 ---
 
@@ -45,7 +47,7 @@
 curl ifconfig.me
 ```
 
-Збережи цю IP — вона потрібна для правил фаєрволу.
+Збережи — потрібна для правил фаєрволу.
 
 ### Крок 2 — Налаштуй Hetzner Firewall
 
@@ -53,14 +55,14 @@ curl ifconfig.me
 
 Додай **Inbound** правила:
 
-| Protocol | Port | Source            | Опис           |
-|----------|------|-------------------|----------------|
-| TCP      | 22   | `ДОМАШНЯ_IP/32`  | SSH            |
-| TCP+UDP  | 53   | `ДОМАШНЯ_IP/32`  | DNS            |
-| TCP      | 3000 | `ДОМАШНЯ_IP/32`  | AGH wizard     |
-| TCP      | 8080 | `ДОМАШНЯ_IP/32`  | AGH веб-панель |
+| Protocol | Port | Source           | Опис           |
+|----------|------|------------------|----------------|
+| TCP      | 22   | `ДОМАШНЯ_IP/32` | SSH            |
+| TCP+UDP  | 53   | `ДОМАШНЯ_IP/32` | DNS            |
+| TCP      | 3000 | `ДОМАШНЯ_IP/32` | AGH wizard     |
+| TCP      | 8080 | `ДОМАШНЯ_IP/32` | AGH веб-панель |
 
-Перейди у вкладку **Servers** всередині фаєрволу і **прикріпи його до свого VPS**.
+Перейди у вкладку **Servers** → **прикріпи фаєрвол до VPS**.
 
 > Hetzner Firewall працює до сервера — заблокований трафік навіть не дійде до VPS.
 
@@ -72,7 +74,7 @@ scp -r dns_filter/ root@YOUR_VPS_IP:/opt/dns_filter
 
 ### Крок 4 — Звільни порт 53 на VPS
 
-Порт 53 зазвичай зайнятий `systemd-resolved`. Вимкни його:
+Порт 53 зазвичай зайнятий `systemd-resolved`:
 
 ```bash
 ssh root@YOUR_VPS_IP
@@ -82,7 +84,7 @@ sudo rm /etc/resolv.conf
 echo "nameserver 1.1.1.1" | sudo tee /etc/resolv.conf
 ```
 
-Перевір що порт вільний:
+Перевір:
 
 ```bash
 sudo ss -tulnp | grep ':53'
@@ -91,7 +93,7 @@ sudo ss -tulnp | grep ':53'
 
 ### Крок 5 — Запуск
 
-**Варіант A — автоматичний (без wizard):**
+#### Варіант A — автоматичний (без wizard)
 
 ```bash
 cd /opt/dns_filter
@@ -100,38 +102,39 @@ nano .env   # встанови AGH_USER та AGH_PASSWORD
 docker compose up -d --build
 ```
 
-Веб-панель одразу доступна на `http://YOUR_VPS_IP:8080`.
+Entrypoint автоматично:
+1. Генерує bcrypt хеш пароля через `htpasswd`
+2. Створює `AdGuardHome.yaml` з шаблону (upstream Cloudflare DoH, блоклісти, кеш)
+3. Запускає AdGuard Home
 
-**Варіант B — через wizard:**
+Веб-панель одразу на `http://YOUR_VPS_IP:8080`.
+
+#### Варіант B — через wizard
 
 ```bash
 cd /opt/dns_filter
 docker compose up -d --build
 ```
 
-Без `AGH_USER`/`AGH_PASSWORD` в `.env` запуститься wizard:
+Без `AGH_USER`/`AGH_PASSWORD` в `.env` стартує wizard:
 
 1. Відкрий `http://YOUR_VPS_IP:3000`
-2. **Крок 1/5** — Ласкаво просимо. Натисни **Далі**
-3. **Крок 2/5** — Мережеві інтерфейси:
+2. **Крок 2/5** — Мережеві інтерфейси:
    - Веб-інтерфейс: **Усі інтерфейси**, порт **80**
    - DNS-сервер: **Усі інтерфейси**, порт **53**
-   - Натисни **Далі**
-4. **Крок 3/5** — Створи **логін** та **пароль** адміна
-5. **Крок 4/5** — Інформація про налаштування пристроїв. Натисни **Далі**
-6. **Крок 5/5** — Готово
+3. **Крок 3/5** — Створи **логін** та **пароль** адміна
+4. Решта кроків — просто **Далі**
 
-> Після wizard UI на порті 3000 зупиняється. Веб-панель тепер на:
-> **`http://YOUR_VPS_IP:8080`**
+> Після wizard UI на порті 3000 зупиняється. Веб-панель тепер на `http://YOUR_VPS_IP:8080`.
 
-### Крок 6 — Перевір що все працює
+### Крок 6 — Перевір що контейнер працює
 
 ```bash
 docker compose ps
 # Колонка PORTS має показувати: 0.0.0.0:53->53, 0.0.0.0:8080->80
 ```
 
-Якщо колонка PORTS порожня — контейнер не зміг зайняти порти. Виправлення:
+Якщо PORTS порожня — контейнер не зміг зайняти порти:
 
 ```bash
 docker compose down
@@ -140,9 +143,7 @@ docker compose up -d
 
 ### Крок 7 — Налаштування DNS (тільки для варіанту B)
 
-> При автоматичному запуску (варіант A) це вже налаштовано в шаблоні.
-
-В веб-панелі AdGuard Home (`http://YOUR_VPS_IP:8080`):
+> Варіант A — вже налаштовано в шаблоні, пропускай цей крок.
 
 **Settings → DNS settings:**
 
@@ -152,11 +153,11 @@ docker compose up -d
 | Bootstrap DNS servers | `1.1.1.1` |
 | Parallel requests | Увімкнено |
 
-Натисни **Test upstreams** → потім **Apply**.
+**Test upstreams** → **Apply**.
 
 ### Крок 8 — Додай блоклісти (тільки для варіанту B)
 
-> При автоматичному запуску (варіант A) блоклісти вже додані.
+> Варіант A — блоклісти вже в шаблоні, пропускай цей крок.
 
 **Filters → DNS blocklists → Add blocklist → Add a custom list:**
 
@@ -166,59 +167,48 @@ docker compose up -d
 | Steven Black | `https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts` |
 | 1Hosts Lite | `https://o0.pages.dev/Lite/adblock.txt` |
 
-> AdGuard DNS filter увімкнений за замовчуванням.
-
 ### Крок 9 — Налаштуй роутер
 
-1. Відкрий панель роутера (зазвичай `192.168.31.1` або `miwifi.com`)
-2. Увійди в адмінку
-3. Перейди в **Settings → Network settings**
-4. Знайди розділ **DNS**
-5. Встанови **Primary DNS**: `YOUR_VPS_IP`
-6. **Secondary DNS**: залиш порожнім (або `YOUR_VPS_IP` ще раз)
-7. Збережи і **перезавантаж роутер**
+1. Відкрий панель роутера (`192.168.31.1` або `miwifi.com`)
+2. **Settings → Network settings → DNS**
+3. **Primary DNS**: `YOUR_VPS_IP`
+4. **Secondary DNS**: залиш порожнім або `YOUR_VPS_IP` ще раз
+5. Збережи → **перезавантаж роутер**
 
-> **НЕ ставити публічний DNS (типу 8.8.8.8) як secondary** — роутер буде
-> відправляти частину запитів напряму туди, минаючи фільтр.
+> **НЕ ставити публічний DNS як secondary** — роутер відправлятиме частину запитів напряму, минаючи фільтр.
 
 ### Крок 10 — Перевірка
-
-З будь-якого пристрою в домашній мережі:
 
 ```bash
 # Має повернути 0.0.0.0 (заблоковано)
 nslookup ads.google.com YOUR_VPS_IP
 
-# Має повернути реальну IP (не заблоковано)
+# Має повернути реальну IP (працює)
 nslookup google.com YOUR_VPS_IP
 ```
 
-Відкрий браузер → зайди на сайт з рекламою → реклама має бути заблокована.
-В дашборді AdGuard Home на `http://YOUR_VPS_IP:8080` мають з'явитись логи запитів.
+В дашборді на `http://YOUR_VPS_IP:8080` мають з'явитись логи запитів.
 
 ---
 
 ## Фаза 2: DoH для мобільних пристроїв (опціонально)
 
-DoH (DNS-over-HTTPS) шифрує DNS-запити. Корисно для телефонів/ноутбуків, особливо поза домом. Потрібен домен для валідного TLS-сертифіката.
+DoH (DNS-over-HTTPS) шифрує DNS-запити. Потрібен домен для TLS-сертифіката.
 
-### Крок 1 — Отримай безкоштовний домен (DuckDNS)
+### Крок 1 — Безкоштовний домен (DuckDNS)
 
-1. Зайди на [duckdns.org](https://www.duckdns.org) → увійди через GitHub або Google
-2. Створи субдомен (напр. `myfilter`) → отримаєш `myfilter.duckdns.org`
-3. Встав IP свого **VPS**
-4. Скопіюй **token** зі сторінки
+1. [duckdns.org](https://www.duckdns.org) → увійди через GitHub або Google
+2. Створи субдомен (напр. `myfilter`) → `myfilter.duckdns.org`
+3. Встав IP свого VPS
+4. Скопіюй **token**
 
 ### Крок 2 — Налаштуй .env
 
-На VPS:
-
 ```bash
-cd /opt/dns_filter
-nano .env
+nano /opt/dns_filter/.env
 ```
 
-Додай (або розкоментуй):
+Додай:
 
 ```
 DUCKDNS_TOKEN=abc123-your-actual-token
@@ -227,28 +217,23 @@ DUCKDNS_DOMAIN=myfilter.duckdns.org
 
 ### Крок 3 — Онови Hetzner Firewall
 
-Додай нове Inbound правило:
+| Protocol | Port | Source           | Опис        |
+|----------|------|------------------|-------------|
+| TCP+UDP  | 443  | `ДОМАШНЯ_IP/32` | DoH + HTTPS |
 
-| Protocol | Port | Source            | Опис        |
-|----------|------|-------------------|-------------|
-| TCP+UDP  | 443  | `ДОМАШНЯ_IP/32`  | DoH + HTTPS |
+> Для DoH поза домом — зміни source на `0.0.0.0/0` (Caddy + AGH мають авторизацію).
 
-> Щоб DoH працював для мобільних пристроїв **поза домом**, зміни source на
-> `0.0.0.0/0` — це безпечно, бо Caddy + AdGuard Home вимагають авторизацію.
-
-### Крок 4 — Запусти з DoH профілем
+### Крок 4 — Запусти з DoH
 
 ```bash
 docker compose --profile doh up -d --build
 ```
 
-Перший білд займає ~2 хвилини (збирає Caddy з DuckDNS плагіном).
-
-Перевір:
+Перший білд ~2 хвилини (Caddy з DuckDNS плагіном).
 
 ```bash
 docker compose --profile doh ps
-# Мають бути два контейнери: "adguard" та "caddy"
+# Мають бути контейнери: "adguard" та "caddy"
 ```
 
 ### Крок 5 — Налаштуй пристрої
@@ -264,24 +249,19 @@ https://myfilter.duckdns.org/dns-query
 
 Створи DoH профіль через [dns.notjakob.com/tool.html](https://dns.notjakob.com/tool.html):
 - Тип: DNS over HTTPS
-- Server URL: `https://myfilter.duckdns.org/dns-query`
-- Завантаж і встанови профіль на iPhone/iPad
+- URL: `https://myfilter.duckdns.org/dns-query`
 
 **Android:**
 
-Android Private DNS використовує DoT (порт 853), а не DoH. Два варіанти:
-- Встанови [Intra](https://play.google.com/store/apps/details?id=app.intra) або [AdGuard](https://adguard.com/adguard-android/overview.html) і вкажи DoH URL
-- Або налаштуй DoT (див. Фазу 3)
+Private DNS використовує DoT (порт 853), не DoH. Варіанти:
+- Додаток [Intra](https://play.google.com/store/apps/details?id=app.intra) або [AdGuard](https://adguard.com/adguard-android/overview.html) з DoH URL
+- Або DoT — див. Фазу 3
 
 ---
 
 ## Фаза 3: DoT для Android Private DNS (опціонально)
 
-Android Private DNS потребує DNS-over-TLS (порт 853).
-
-### Крок 1 — Скопіюй сертифікати з Caddy в AdGuard Home
-
-Caddy автоматично отримує сертифікати Let's Encrypt. Скопіюй їх для AdGuard Home:
+### Крок 1 — Скопіюй сертифікати з Caddy
 
 ```bash
 cat > /opt/dns_filter/sync-certs.sh << 'SCRIPT'
@@ -293,19 +273,19 @@ CERT_DIR="/data/caddy/certificates/acme-v02.api.letsencrypt.org-directory/${DUCK
 docker cp "caddy:${CERT_DIR}/${DUCKDNS_DOMAIN}.crt" ./adguardhome/conf/cert.pem
 docker cp "caddy:${CERT_DIR}/${DUCKDNS_DOMAIN}.key" ./adguardhome/conf/key.pem
 docker restart adguard
-echo "Сертифікати синхронізовані, AdGuard Home перезапущений."
+echo "Сертифікати синхронізовані."
 SCRIPT
 chmod +x /opt/dns_filter/sync-certs.sh
 
 ./sync-certs.sh
 ```
 
-> Caddy оновлює сертифікати автоматично. Запускай `./sync-certs.sh` кожні ~60 днів,
-> або додай cron: `0 3 1 */2 * /opt/dns_filter/sync-certs.sh`
+> Caddy оновлює сертифікати автоматично. Запускай `./sync-certs.sh` кожні ~60 днів
+> або через cron: `0 3 1 */2 * /opt/dns_filter/sync-certs.sh`
 
 ### Крок 2 — Увімкни шифрування в AdGuard Home
 
-Відкрий `http://YOUR_VPS_IP:8080` → **Settings → Encryption settings:**
+**Settings → Encryption settings:**
 
 | Параметр | Значення |
 |----------|----------|
@@ -316,19 +296,15 @@ chmod +x /opt/dns_filter/sync-certs.sh
 | HTTPS port | `0` (Caddy обробляє HTTPS) |
 | DNS-over-TLS port | `853` |
 
-Натисни **Save**.
-
-### Крок 3 — Онови Hetzner Firewall
-
-Додай Inbound правило:
+### Крок 3 — Hetzner Firewall
 
 | Protocol | Port | Source      | Опис |
 |----------|------|-------------|------|
 | TCP      | 853  | `0.0.0.0/0` | DoT  |
 
-### Крок 4 — Налаштуй Android
+### Крок 4 — Android
 
-Settings → Network & Internet → Private DNS → **Hostname постачальника приватного DNS:**
+Settings → Network & Internet → Private DNS:
 
 ```
 myfilter.duckdns.org
@@ -338,7 +314,7 @@ myfilter.duckdns.org
 
 ## Обслуговування
 
-### Оновлення контейнерів
+### Оновлення
 
 ```bash
 cd /opt/dns_filter
@@ -347,33 +323,42 @@ docker compose up -d --build                       # без DoH
 docker compose --profile doh up -d --build         # з DoH
 ```
 
-### Перегляд логів
+### Логи
 
 ```bash
-docker logs -f adguard    # логи AdGuard Home
-docker logs -f caddy      # логи Caddy (якщо DoH увімкнений)
-docker compose ps         # статус контейнерів
+docker logs -f adguard
+docker logs -f caddy
+docker compose ps
+```
+
+### Скидання конфігу (перегенерація з .env)
+
+```bash
+docker compose down
+docker volume rm dns_filter_agh_conf
+docker compose up -d --build
 ```
 
 ### Змінилась домашня IP
 
-Якщо провайдер видав нову IP:
-
-1. Дізнайся нову IP: `curl ifconfig.me`
+1. `curl ifconfig.me`
 2. Онови правила в Hetzner Firewall
-3. DuckDNS: онови IP на [duckdns.org](https://www.duckdns.org) або через API:
+3. DuckDNS:
    ```bash
    curl "https://www.duckdns.org/update?domains=myfilter&token=YOUR_TOKEN&ip="
    ```
 
-### Вирішення проблем
+---
+
+## Вирішення проблем
 
 | Проблема | Рішення |
 |----------|---------|
 | Не відкривається порт 3000 | Фаєрвол не прикріплений до сервера, або IP змінилась |
-| Порт 53 зайнятий | Вимкни `systemd-resolved` (крок 4, фаза 1) |
-| Контейнер запущений, але порти не прокинуті | `docker compose down && docker compose up -d` |
-| ERR_CONNECTION_REFUSED після wizard | Wizard завершено — UI переїхав на порт **8080** |
-| Реклама все ще показується | Очисти кеш браузера, перевір що secondary DNS на роутері порожній |
-| DoH не працює | `docker logs caddy`, перевір що DuckDNS домен вказує на IP VPS |
-| `/dns-query` повертає 404 | Перевір `allow_unencrypted_doh: true` в конфігу AGH |
+| Порт 53 зайнятий | `sudo systemctl disable --now systemd-resolved` |
+| Контейнер працює, але порти не прокинуті | `docker compose down && docker compose up -d` |
+| ERR_CONNECTION_REFUSED після wizard | Wizard завершено — UI на порті **8080** |
+| 403 — invalid username or password | Скинь конфіг: `docker volume rm dns_filter_agh_conf` та перезапусти |
+| Реклама показується | Очисти кеш браузера, secondary DNS на роутері має бути порожній |
+| DoH — `/dns-query` повертає 404 | Перевір `allow_unencrypted_doh: true` в конфігу AGH |
+| DoH не працює | `docker logs caddy`, перевір що DuckDNS домен → IP VPS |
