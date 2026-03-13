@@ -21,8 +21,8 @@ dns:
     - 1.1.1.1
     - 1.0.0.1
   cache_size: 4194304
-  cache_ttl_min: 300
-  cache_ttl_max: 86400
+  cache_ttl_min: 60
+  cache_ttl_max: 3600
   cache_optimistic: true
   blocked_response_ttl: 60
   blocking_mode: default

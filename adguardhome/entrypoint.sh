@@ -16,6 +16,11 @@ if [ ! -f "$CONF" ]; then
       print
     }' "$TEMPLATE" > "$CONF"
 
+    if [ ! -s "$CONF" ]; then
+      echo "[entrypoint] ERROR: failed to generate config" >&2
+      exit 1
+    fi
+
     echo "[entrypoint] Config created with user '${AGH_USER}'"
   else
     echo "[entrypoint] No AGH_USER/AGH_PASSWORD set — starting setup wizard on :3000"
